@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f5f2eb"><link rel="manifest" href="/static/manifest.webmanifest"><title>Field Notes</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="topbar"><a class="wordmark" href="/">FIELD NOTES<span>internship record</span></a><p id="today-label"></p></header>
+  <main>
+    <section class="hero"><div><p class="eyebrow">PRIVATE WORK LOG</p><h1>Make the day<br>count.</h1></div><p class="hero-note">A quiet record of where you showed up and what moved forward.</p></section>
+    <section class="grid status-grid">
+      <article class="card attendance-card"><div class="card-head"><p class="eyebrow">TODAY · ATTENDANCE</p><span id="attendance-state" class="status">NOT STARTED</span></div>
+        <div class="times"><div><span>Arrival</span><strong id="check-in">—</strong></div><div><span>Departure</span><strong id="check-out">—</strong></div></div>
+        <div class="actions"><button id="in-button" class="button primary">Check in</button><button id="out-button" class="button secondary">Check out</button></div>
+      </article>
+      <article class="card report-card"><p class="eyebrow">WEEKLY VIEW</p><h2>Turn notes into a clear record.</h2><p>Useful when it’s time to reflect, report, or talk about your work.</p><button id="report-button" class="text-button">Generate last 7 days <span>→</span></button></article>
+    </section>
+    <section class="journal"><div class="section-heading"><div><p class="eyebrow">DAILY JOURNAL</p><h2>What moved today?</h2></div><p>Keep it honest. Keep it light.</p></div>
+      <form id="entry-form" class="entry-form"><input id="entry-title" maxlength="120" required placeholder="A short title"><textarea id="entry-body" required placeholder="A sentence or two about what you worked on."></textarea><button class="button primary" type="submit">Save note</button></form>
+      <div id="entries" class="entries"></div>
+    </section>
+    <section class="history"><div class="section-heading"><div><p class="eyebrow">RECENT DAYS</p><h2>Attendance ledger</h2></div></div><div id="attendance-list"></div></section>
+  </main>
+  <dialog id="report-dialog"><button class="close" aria-label="Close">×</button><p class="eyebrow">GENERATED FROM YOUR NOTES</p><pre id="report-output"></pre></dialog>
+  <div id="toast" role="status"></div><script src="/static/app.js"></script><script>if('serviceWorker' in navigator)navigator.serviceWorker.register('/static/sw.js')</script>
+</body></html>

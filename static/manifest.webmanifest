@@ -1,0 +1,8 @@
+{
+  "name": "Field Notes",
+  "short_name": "Field Notes",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f5f2eb",
+  "theme_color": "#f5f2eb"
+}
