@@ -30,7 +30,7 @@ Open `http://127.0.0.1:8000` and enter `TRACKER_API_TOKEN` once when prompted. O
 ## iPhone 17 automation
 
 1. In **Shortcuts**, make **Office check in**. Add **Get Contents of URL**:
-   - URL: `https://YOUR-VERCEL-DOMAIN/api/attendance/check-in`
+   - URL: `https://intern-pb.vercel.app/api/attendance/check-in`
    - Method: `POST`
    - Request Body: JSON → `source` = `ios_shortcut`
    - Header: `Authorization` = `Bearer YOUR_TRACKER_API_TOKEN`
