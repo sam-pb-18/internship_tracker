@@ -6,12 +6,6 @@ Private, mobile-first attendance and work records hosted on Vercel with Supabase
 
 This project reads a local `.env` file; it is ignored by Git. Supabase credentials already present there can be used as individual values (`host`, `port`, `database`, `user`, `SUPABASE_DATABASE_PASSWORD`). For Vercel, use one environment variable instead:
 
-```env
-# Copy this from Supabase Dashboard → Connect → Transaction pooler.
-DATABASE_URL=postgresql://...
-TRACKER_API_TOKEN=a-long-unique-random-secret
-```
-
 `TRACKER_API_TOKEN` is required. It is the private website access key and the credential your iPhone sends. Do not use the database password for it.
 
 ## Local run
@@ -41,7 +35,7 @@ Open `http://127.0.0.1:8000` and enter `TRACKER_API_TOKEN` once when prompted. O
    - Request Body: JSON → `source` = `ios_shortcut`
    - Header: `Authorization` = `Bearer YOUR_TRACKER_API_TOKEN`
 2. Duplicate it as **Office check out** and change the URL to `/api/attendance/check-out`.
-3. Go to **Automation** → **+** → **Arrive**, choose your office, then add **Run Shortcut** → *Office check in*. Create the reciprocal **Leave** automation using *Office check out*.
+3. Go to **Automation** → **+** → **Arrive**, choose your office, then add **Run Shortcut** → _Office check in_. Create the reciprocal **Leave** automation using _Office check out_.
 4. Test both shortcuts manually before relying on location automation. Use the manual dashboard controls when iOS delays a location trigger or there is no connection.
 5. Open the deployed site in Safari → Share → **Add to Home Screen** for an app-like launcher.
 
