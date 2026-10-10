@@ -10,13 +10,15 @@ function minutesBetween(a,b){return a&&b?Math.max(0,(new Date(b)-new Date(a))/60
 
 function renderAttendance(a){
   const mins=a?.check_in?minutesBetween(a.check_in,a.check_out||new Date().toISOString()):0;
-  $('#check-in').textContent=fmtTime(a?.check_in);$('#check-out').textContent=fmtTime(a?.check_out);
-  $('#today-hours').textContent=fmtHours(mins);$('#goal-fill').style.width=`${Math.min(100,(mins/480)*100)}%`;
+  const mode=a?.work_mode||'office';
+  $('#check-in').textContent=mode==='office'?fmtTime(a?.check_in):mode==='wfh'?'Working from home':'On leave';
+  $('#check-out').textContent=mode==='office'?fmtTime(a?.check_out):'No office time';
+  $('#check-in-label').textContent=mode==='office'?'Arrival':'Today';$('#check-out-label').textContent=mode==='office'?'Departure':'Attendance';
   const state=$('#attendance-state');
-  state.textContent=a?.check_out?(mins>=480?'8H REACHED':'DAY COMPLETE'):a?.check_in?'ON THE CLOCK':'NOT STARTED';
+  state.textContent=mode==='wfh'?'WFH':mode==='leave'?'ON LEAVE':a?.check_out?(mins>=480?'8H REACHED':'DAY COMPLETE'):a?.check_in?'ON THE CLOCK':'NOT STARTED';
   state.classList.toggle('live',!!a?.check_in&&!a?.check_out);
-  $('#goal-caption').textContent=mins>=480?'8h goal reached · nice work':`${fmtHours(Math.max(0,480-mins))} to the 8h target`;
-  $('#in-button').disabled=!!a?.check_in;$('#out-button').disabled=!a?.check_in||!!a?.check_out;
+  $('#in-button').disabled=mode==='office'&&!!a?.check_in;$('#out-button').disabled=mode!=='office'||!a?.check_in||!!a?.check_out;
+  $('#wfh-button').disabled=mode==='wfh';$('#leave-button').disabled=mode==='leave';
 }
 function renderEntries(entries){
   $('#entries').innerHTML=entries.length?entries.map(e=>`<article class="entry"><time>${fmtDay(e.day)}</time><div><h3>${esc(e.title)}</h3><p>${esc(e.body)}</p></div><button class="quiet-button" data-delete-entry="${e.id}">Delete</button></article>`).join(''):'<p class="chart-empty">No notes yet. Capture one thought before the day gets away.</p>';
@@ -29,7 +31,8 @@ function renderTasks(tasks){
   document.querySelectorAll('[data-delete-task]').forEach(b=>b.onclick=async()=>{try{await api('/tasks/'+b.dataset.deleteTask,{method:'DELETE'});load()}catch(e){toast(e.message)}});
 }
 function renderLedger(records){
-  $('#attendance-list').innerHTML=records.length?records.map(x=>{const mins=minutesBetween(x.check_in,x.check_out),target=mins>=480;return `<div class="ledger-row"><strong>${fmtDay(x.day)}</strong><span>${fmtTime(x.check_in)}</span><span>${fmtTime(x.check_out)}</span><span class="${target?'on-target':'below-target'}">${fmtHours(mins)} · ${target?'goal met':'under 8h'}</span></div>`}).join(''):'<p class="chart-empty">Your attendance record will appear here.</p>';
+  $('#attendance-list').innerHTML=records.length?records.map(x=>{const mode=x.work_mode||'office',mins=minutesBetween(x.check_in,x.check_out),target=mins>=480,manual=x.manually_overridden||x.source==='manual_override',office=mode==='office';const detail=office?`${fmtHours(mins)} · ${target?'goal met':'under 8h'}`:mode==='wfh'?'Working from home':'On leave';return `<div class="ledger-row"><strong><small>Date</small>${fmtDay(x.day)}</strong><span><small>${office?'In':'Mode'}</small>${office?fmtTime(x.check_in):mode.toUpperCase()}</span><span><small>${office?'Out':'Office time'}</small>${office?fmtTime(x.check_out):'—'}</span><span class="duration-cell ${office?(target?'on-target':'below-target'):''}"><small>${office?'Office hours':'Status'}</small>${detail}${manual?'<em class="manual-mark">MANUAL</em>':''}</span>${office?`<button class="quiet-button edit-attendance" data-edit-attendance="${x.day}">Edit</button>`:'<span></span>'}</div>`}).join(''):'<p class="chart-empty">Your attendance record will appear here.</p>';
+  document.querySelectorAll('[data-edit-attendance]').forEach(button=>button.onclick=()=>openOverride(records.find(record=>record.day===button.dataset.editAttendance)));
 }
 function renderChart(analysis){
   const {days,summary,target_hours:target}=analysis;
@@ -47,15 +50,27 @@ function renderChart(analysis){
 }
 function render(data,analysis){
   $('#today-label').textContent=new Intl.DateTimeFormat([], {weekday:'long',month:'long',day:'numeric'}).format(new Date(data.today+'T12:00:00'));
-  renderAttendance(data.attendance);renderEntries(data.entries);renderTasks(data.tasks);renderLedger(data.recent_attendance);renderChart(analysis);
+  $('#office-days').textContent=data.office_days_month;renderAttendance(data.attendance);renderEntries(data.entries);renderTasks(data.tasks);renderLedger(data.recent_attendance);renderChart(analysis);
 }
 async function load(){
   if(!key){key=prompt('Enter your personal Field Notes access key. It stays only in this browser.')||'';localStorage.setItem('field-notes-key',key)}
   try{const [data,analysis]=await Promise.all([api('/dashboard'),api('/analysis')]);render(data,analysis)}catch(e){toast(e.message)}
 }
+function toLocalInput(value){const d=new Date(value),pad=n=>String(n).padStart(2,'0');return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`}
+function openOverride(record){
+  if(!record)return;
+  $('#override-day').value=record.day;
+  $('#override-in').value=record.check_in?toLocalInput(record.check_in):`${record.day}T09:00`;
+  $('#override-out').value=record.check_out?toLocalInput(record.check_out):`${record.day}T17:00`;
+  $('#override-dialog').showModal();
+}
 $('#in-button').onclick=async()=>{try{const r=await api('/manual/check-in',{method:'POST'});toast(r.status==='already_checked_in'?'Already checked in':'Check-in saved');load()}catch(e){toast(e.message)}};
 $('#out-button').onclick=async()=>{try{const r=await api('/manual/check-out',{method:'POST'});toast(r.status==='already_checked_out'?'Already checked out':'Check-out saved');load()}catch(e){toast(e.message)}};
+async function setWorkMode(work_mode){try{await api('/work-mode',{method:'POST',body:JSON.stringify({work_mode})});toast(work_mode==='wfh'?'Marked as working from home':'Marked as leave');load()}catch(e){toast(e.message)}}
+$('#wfh-button').onclick=()=>setWorkMode('wfh');$('#leave-button').onclick=()=>setWorkMode('leave');
 $('#entry-form').onsubmit=async e=>{e.preventDefault();try{await api('/work-logs',{method:'POST',body:JSON.stringify({title:$('#entry-title').value,body:$('#entry-body').value})});e.target.reset();toast('Note saved');load()}catch(e){toast(e.message)}};
 $('#task-form').onsubmit=async e=>{e.preventDefault();try{await api('/tasks',{method:'POST',body:JSON.stringify({title:$('#task-title').value})});e.target.reset();$('#task-title').focus();load()}catch(e){toast(e.message)}};
+$('#override-form').onsubmit=async e=>{e.preventDefault();const day=$('#override-day').value;try{await api('/attendance/'+day,{method:'PUT',body:JSON.stringify({check_in:$('#override-in').value,check_out:$('#override-out').value})});$('#override-dialog').close();toast('Attendance correction saved');load()}catch(e){toast(e.message)}};
 $('#report-button').onclick=async()=>{const end=new Date(),start=new Date();start.setDate(end.getDate()-6);const iso=d=>d.toISOString().slice(0,10);try{const r=await api('/reports',{method:'POST',body:JSON.stringify({start_date:iso(start),end_date:iso(end),report_type:'weekly'})});$('#report-output').textContent=r.content;$('#report-dialog').showModal()}catch(e){toast(e.message)}};
 $('.close').onclick=()=>$('#report-dialog').close();load();
+document.querySelector('[data-close-override]').onclick=()=>$('#override-dialog').close();

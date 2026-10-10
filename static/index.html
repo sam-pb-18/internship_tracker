@@ -13,9 +13,9 @@
     <section class="dashboard-grid">
       <article class="card attendance-card">
         <div class="card-head"><p class="eyebrow">TODAY · ATTENDANCE</p><span id="attendance-state" class="status">NOT STARTED</span></div>
-        <div class="attendance-readout"><div><span>Time recorded</span><strong id="today-hours">0h 00m</strong></div><div class="goal-meter" aria-label="Progress toward 8 hour daily goal"><i id="goal-fill"></i></div><span id="goal-caption">8h target · timing is flexible</span></div>
-        <div class="times"><div><span>Arrival</span><strong id="check-in">—</strong></div><div><span>Departure</span><strong id="check-out">—</strong></div></div>
-        <div class="actions"><button id="in-button" class="button primary">Check in</button><button id="out-button" class="button secondary">Check out</button></div>
+        <div class="attendance-readout"><div><span>Days in office</span><strong id="office-days">0</strong></div><span>This month · office time stays flexible</span></div>
+        <div class="times"><div><span id="check-in-label">Arrival</span><strong id="check-in">—</strong></div><div><span id="check-out-label">Departure</span><strong id="check-out">—</strong></div></div>
+        <div class="actions"><button id="in-button" class="button primary">Check in</button><button id="out-button" class="button secondary">Check out</button><button id="wfh-button" class="button secondary">WFH</button><button id="leave-button" class="button secondary">Leave</button></div>
       </article>
       <article class="card report-card"><p class="eyebrow">WEEKLY VIEW</p><h2>Turn notes into a clear record.</h2><p>Keep an honest trail for reflection, reviews, and the conversations that matter.</p><button id="report-button" class="text-button">Generate last 7 days <span>→</span></button></article>
     </section>
@@ -32,7 +32,7 @@
       </section>
     </section>
 
-    <section class="history"><div class="section-heading"><div><p class="eyebrow">RECENT DAYS</p><h2>Attendance ledger</h2></div><p>Any schedule. An 8-hour day is the only reference.</p></div><div id="attendance-list"></div></section>
+    <section class="history"><div class="section-heading"><div><p class="eyebrow">RECENT DAYS</p><h2>Attendance ledger</h2></div><p>Any schedule. An 8-hour day is the only reference.</p></div><div class="ledger-wrap"><div id="attendance-list"></div></div></section>
 
     <section class="analysis"><div class="section-heading"><div><p class="eyebrow">ANALYSIS</p><h2>Your time, in context.</h2></div><p>Completed office days over the last 30 days.</p></div>
       <div id="analysis-summary" class="summary-grid"></div>
@@ -40,5 +40,6 @@
     </section>
   </main>
   <dialog id="report-dialog"><button class="close" aria-label="Close">×</button><p class="eyebrow">GENERATED FROM YOUR NOTES</p><pre id="report-output"></pre></dialog>
+  <dialog id="override-dialog"><button class="close" data-close-override aria-label="Close">×</button><p class="eyebrow">MANUAL CORRECTION</p><h2>Edit attendance</h2><p class="dialog-note">This keeps the day in your ledger and marks it as manually overridden.</p><form id="override-form" class="override-form"><label>Date<input id="override-day" type="date" required readonly></label><label>Check in<input id="override-in" type="datetime-local" required></label><label>Check out<input id="override-out" type="datetime-local" required></label><button class="button primary" type="submit">Save correction</button></form></dialog>
   <div id="toast" role="status"></div><script src="/static/app.js"></script><script>if('serviceWorker' in navigator)navigator.serviceWorker.register('/static/sw.js')</script>
 </body></html>

@@ -61,8 +61,12 @@ def initialize() -> None:
             CREATE TABLE IF NOT EXISTS attendance (
                 id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, day DATE UNIQUE NOT NULL,
                 check_in TIMESTAMPTZ, check_out TIMESTAMPTZ, source TEXT NOT NULL,
+                work_mode TEXT NOT NULL DEFAULT 'office' CHECK (work_mode IN ('office', 'wfh', 'leave')),
+                manually_overridden BOOLEAN NOT NULL DEFAULT FALSE,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT now()
             );
+            ALTER TABLE attendance ADD COLUMN IF NOT EXISTS manually_overridden BOOLEAN NOT NULL DEFAULT FALSE;
+            ALTER TABLE attendance ADD COLUMN IF NOT EXISTS work_mode TEXT NOT NULL DEFAULT 'office';
             CREATE TABLE IF NOT EXISTS work_logs (
                 id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, day DATE NOT NULL,
                 title TEXT NOT NULL, body TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -114,6 +118,15 @@ class TaskRequest(BaseModel):
     title: str = Field(min_length=1, max_length=180)
 
 
+class ManualAttendanceOverride(BaseModel):
+    check_in: datetime
+    check_out: datetime
+
+
+class WorkModeRequest(BaseModel):
+    work_mode: Literal["wfh", "leave"]
+
+
 OFFICE_DAY = "(CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata')::date"
 OFFICE_TZ = ZoneInfo("Asia/Kolkata")
 
@@ -132,10 +145,14 @@ def dashboard(_: None = Depends(require_token)):
         entries = cursor.fetchall()
         cursor.execute("SELECT * FROM attendance ORDER BY day DESC LIMIT 7")
         recent = cursor.fetchall()
+        cursor.execute("""SELECT COUNT(*) AS office_days FROM attendance
+                          WHERE work_mode = 'office' AND day >= date_trunc('month', CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata')::date
+                          AND day < (date_trunc('month', CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata') + INTERVAL '1 month')::date""")
+        office_days = cursor.fetchone()["office_days"]
         cursor.execute("SELECT * FROM tasks ORDER BY completed ASC, created_at DESC LIMIT 30")
         tasks = cursor.fetchall()
     return {"today": datetime.now(OFFICE_TZ).date(), "attendance": attendance, "entries": entries,
-            "recent_attendance": recent, "tasks": tasks}
+            "recent_attendance": recent, "tasks": tasks, "office_days_month": office_days}
 
 
 def record_attendance(event: Literal["check_in", "check_out"], source: str):
@@ -146,9 +163,11 @@ def record_attendance(event: Literal["check_in", "check_out"], source: str):
             if record and record["check_in"]:
                 return {"success": True, "status": "already_checked_in", "timestamp": record["check_in"]}
             if record:
-                cursor.execute(f"UPDATE attendance SET check_in = now(), source = %s WHERE day = {OFFICE_DAY} RETURNING check_in", (source,))
+                cursor.execute(f"""UPDATE attendance SET check_in = now(), check_out = NULL, source = %s,
+                                  work_mode = 'office', manually_overridden = FALSE WHERE day = {OFFICE_DAY}
+                                  RETURNING check_in""", (source,))
             else:
-                cursor.execute(f"INSERT INTO attendance (day, check_in, source) VALUES ({OFFICE_DAY}, now(), %s) RETURNING check_in", (source,))
+                cursor.execute(f"INSERT INTO attendance (day, check_in, source, work_mode) VALUES ({OFFICE_DAY}, now(), %s, 'office') RETURNING check_in", (source,))
         else:
             if not record or not record["check_in"]:
                 raise HTTPException(409, "Check in before checking out")
@@ -180,6 +199,31 @@ def attendance(start_date: date | None = None, end_date: date | None = None, _: 
         cursor.execute("SELECT * FROM attendance WHERE day BETWEEN %s AND %s ORDER BY day DESC",
                        (start_date or date.today() - timedelta(days=30), end_date or date.today()))
         return cursor.fetchall()
+
+
+@app.put("/api/attendance/{attendance_day}")
+def override_attendance(attendance_day: date, override: ManualAttendanceOverride, _: None = Depends(require_token)):
+    check_in = override.check_in.replace(tzinfo=OFFICE_TZ) if override.check_in.tzinfo is None else override.check_in
+    check_out = override.check_out.replace(tzinfo=OFFICE_TZ) if override.check_out.tzinfo is None else override.check_out
+    if check_out <= check_in:
+        raise HTTPException(422, "Check out must be later than check in")
+    with db() as conn, conn.cursor() as cursor:
+        cursor.execute("""INSERT INTO attendance (day, check_in, check_out, source, work_mode, manually_overridden)
+                          VALUES (%s, %s, %s, 'manual_override', 'office', TRUE)
+                          ON CONFLICT (day) DO UPDATE SET check_in = EXCLUDED.check_in,
+                              check_out = EXCLUDED.check_out, source = 'manual_override', work_mode = 'office', manually_overridden = TRUE
+                          RETURNING *""", (attendance_day, check_in, check_out))
+        return cursor.fetchone()
+
+
+@app.post("/api/work-mode")
+def set_work_mode(payload: WorkModeRequest, _: None = Depends(require_token)):
+    with db() as conn, conn.cursor() as cursor:
+        cursor.execute(f"""INSERT INTO attendance (day, source, work_mode) VALUES ({OFFICE_DAY}, 'web', %s)
+                          ON CONFLICT (day) DO UPDATE SET check_in = NULL, check_out = NULL,
+                              source = 'web', work_mode = EXCLUDED.work_mode, manually_overridden = FALSE
+                          RETURNING *""", (payload.work_mode,))
+        return cursor.fetchone()
 
 
 @app.post("/api/work-logs")
