@@ -5,6 +5,7 @@ from contextlib import contextmanager
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Literal
+from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Header, HTTPException
@@ -72,7 +73,13 @@ def initialize() -> None:
                 end_date DATE NOT NULL, report_type TEXT NOT NULL, content TEXT NOT NULL,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT now()
             );
+            CREATE TABLE IF NOT EXISTS tasks (
+                id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, title TEXT NOT NULL,
+                completed BOOLEAN NOT NULL DEFAULT FALSE, created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                completed_at TIMESTAMPTZ
+            );
             CREATE INDEX IF NOT EXISTS work_logs_day_idx ON work_logs (day DESC, created_at DESC);
+            CREATE INDEX IF NOT EXISTS tasks_open_idx ON tasks (completed, created_at DESC);
         """)
 
 
@@ -103,6 +110,14 @@ class ReportRequest(BaseModel):
     report_type: str = "custom"
 
 
+class TaskRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=180)
+
+
+OFFICE_DAY = "(CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata')::date"
+OFFICE_TZ = ZoneInfo("Asia/Kolkata")
+
+
 @app.get("/")
 def home():
     return FileResponse(ROOT / "static" / "index.html")
@@ -111,32 +126,35 @@ def home():
 @app.get("/api/dashboard")
 def dashboard(_: None = Depends(require_token)):
     with db() as conn, conn.cursor() as cursor:
-        cursor.execute("SELECT * FROM attendance WHERE day = CURRENT_DATE")
+        cursor.execute(f"SELECT * FROM attendance WHERE day = {OFFICE_DAY}")
         attendance = cursor.fetchone()
         cursor.execute("SELECT * FROM work_logs ORDER BY day DESC, created_at DESC LIMIT 8")
         entries = cursor.fetchall()
         cursor.execute("SELECT * FROM attendance ORDER BY day DESC LIMIT 7")
         recent = cursor.fetchall()
-    return {"today": date.today(), "attendance": attendance, "entries": entries, "recent_attendance": recent}
+        cursor.execute("SELECT * FROM tasks ORDER BY completed ASC, created_at DESC LIMIT 30")
+        tasks = cursor.fetchall()
+    return {"today": datetime.now(OFFICE_TZ).date(), "attendance": attendance, "entries": entries,
+            "recent_attendance": recent, "tasks": tasks}
 
 
 def record_attendance(event: Literal["check_in", "check_out"], source: str):
     with db() as conn, conn.cursor() as cursor:
-        cursor.execute("SELECT * FROM attendance WHERE day = CURRENT_DATE FOR UPDATE")
+        cursor.execute(f"SELECT * FROM attendance WHERE day = {OFFICE_DAY} FOR UPDATE")
         record = cursor.fetchone()
         if event == "check_in":
             if record and record["check_in"]:
                 return {"success": True, "status": "already_checked_in", "timestamp": record["check_in"]}
             if record:
-                cursor.execute("UPDATE attendance SET check_in = now(), source = %s WHERE day = CURRENT_DATE RETURNING check_in", (source,))
+                cursor.execute(f"UPDATE attendance SET check_in = now(), source = %s WHERE day = {OFFICE_DAY} RETURNING check_in", (source,))
             else:
-                cursor.execute("INSERT INTO attendance (day, check_in, source) VALUES (CURRENT_DATE, now(), %s) RETURNING check_in", (source,))
+                cursor.execute(f"INSERT INTO attendance (day, check_in, source) VALUES ({OFFICE_DAY}, now(), %s) RETURNING check_in", (source,))
         else:
             if not record or not record["check_in"]:
                 raise HTTPException(409, "Check in before checking out")
             if record["check_out"]:
                 return {"success": True, "status": "already_checked_out", "timestamp": record["check_out"]}
-            cursor.execute("UPDATE attendance SET check_out = now(), source = %s WHERE day = CURRENT_DATE RETURNING check_out", (source,))
+            cursor.execute(f"UPDATE attendance SET check_out = now(), source = %s WHERE day = {OFFICE_DAY} RETURNING check_out", (source,))
         timestamp = cursor.fetchone()[event]
     return {"success": True, "status": event, "timestamp": timestamp}
 
@@ -188,6 +206,48 @@ def delete_entry(entry_id: int, _: None = Depends(require_token)):
     with db() as conn, conn.cursor() as cursor:
         cursor.execute("DELETE FROM work_logs WHERE id = %s", (entry_id,))
     return {"success": True}
+
+
+@app.post("/api/tasks")
+def create_task(task: TaskRequest, _: None = Depends(require_token)):
+    with db() as conn, conn.cursor() as cursor:
+        cursor.execute("INSERT INTO tasks (title) VALUES (%s) RETURNING *", (task.title.strip(),))
+        return cursor.fetchone()
+
+
+@app.patch("/api/tasks/{task_id}/toggle")
+def toggle_task(task_id: int, _: None = Depends(require_token)):
+    with db() as conn, conn.cursor() as cursor:
+        cursor.execute("""UPDATE tasks SET completed = NOT completed,
+                          completed_at = CASE WHEN NOT completed THEN now() ELSE NULL END
+                          WHERE id = %s RETURNING *""", (task_id,))
+        task = cursor.fetchone()
+    if not task:
+        raise HTTPException(404, "Task not found")
+    return task
+
+
+@app.delete("/api/tasks/{task_id}")
+def delete_task(task_id: int, _: None = Depends(require_token)):
+    with db() as conn, conn.cursor() as cursor:
+        cursor.execute("DELETE FROM tasks WHERE id = %s", (task_id,))
+    return {"success": True}
+
+
+@app.get("/api/analysis")
+def analysis(_: None = Depends(require_token)):
+    with db() as conn, conn.cursor() as cursor:
+        cursor.execute("""SELECT day, check_in, check_out,
+                          ROUND(EXTRACT(EPOCH FROM (check_out - check_in)) / 3600.0, 2) AS hours
+                          FROM attendance WHERE check_in IS NOT NULL AND check_out IS NOT NULL
+                          ORDER BY day DESC LIMIT 30""")
+        rows = list(reversed(cursor.fetchall()))
+    hours = [float(row["hours"]) for row in rows]
+    return {"target_hours": 8, "days": rows, "summary": {
+        "completed_days": len(rows), "total_hours": round(sum(hours), 1),
+        "average_hours": round(sum(hours) / len(hours), 1) if hours else 0,
+        "target_days": sum(hour >= 8 for hour in hours),
+    }}
 
 
 @app.post("/api/reports")
