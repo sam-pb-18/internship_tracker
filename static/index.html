@@ -32,7 +32,7 @@
       </section>
     </section>
 
-    <section class="history"><div class="section-heading"><div><p class="eyebrow">RECENT DAYS</p><h2>Attendance ledger</h2></div><p>Any schedule. An 8-hour day is the only reference.</p></div><div class="ledger-wrap"><div id="attendance-list"></div></div></section>
+    <section class="history"><div class="section-heading"><div><p class="eyebrow">RECENT DAYS</p><h2>Attendance ledger</h2></div><div class="history-actions"><p>Any schedule. An 8-hour day is the only reference.</p><button id="add-attendance" class="quiet-button">+ Add past day</button></div></div><div class="ledger-wrap"><div id="attendance-list"></div></div></section>
 
     <section class="analysis"><div class="section-heading"><div><p class="eyebrow">ANALYSIS</p><h2>Your time, in context.</h2></div><p>Completed office days over the last 30 days.</p></div>
       <div id="analysis-summary" class="summary-grid"></div>
@@ -40,6 +40,6 @@
     </section>
   </main>
   <dialog id="report-dialog"><button class="close" aria-label="Close">×</button><p class="eyebrow">GENERATED FROM YOUR NOTES</p><pre id="report-output"></pre></dialog>
-  <dialog id="override-dialog"><button class="close" data-close-override aria-label="Close">×</button><p class="eyebrow">MANUAL CORRECTION</p><h2>Edit attendance</h2><p class="dialog-note">This keeps the day in your ledger and marks it as manually overridden.</p><form id="override-form" class="override-form"><label>Date<input id="override-day" type="date" required readonly></label><label>Check in<input id="override-in" type="datetime-local" required></label><label>Check out<input id="override-out" type="datetime-local" required></label><button class="button primary" type="submit">Save correction</button></form></dialog>
+  <dialog id="override-dialog"><button class="close" data-close-override aria-label="Close">×</button><p class="eyebrow">MANUAL ATTENDANCE</p><h2 id="override-title">Edit attendance</h2><p class="dialog-note">Manual entries are clearly marked in the ledger.</p><form id="override-form" class="override-form"><label>Date<input id="override-day" type="date" required></label><label>Work type<select id="override-mode"><option value="office">Office</option><option value="wfh">Working from home</option><option value="leave">Leave</option></select></label><div id="override-times"><label>Check in<input id="override-in" type="datetime-local" required></label><label>Check out<input id="override-out" type="datetime-local" required></label></div><button class="button primary" type="submit">Save attendance</button></form></dialog>
   <div id="toast" role="status"></div><script src="/static/app.js"></script><script>if('serviceWorker' in navigator)navigator.serviceWorker.register('/static/sw.js')</script>
 </body></html>

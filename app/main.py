@@ -119,8 +119,9 @@ class TaskRequest(BaseModel):
 
 
 class ManualAttendanceOverride(BaseModel):
-    check_in: datetime
-    check_out: datetime
+    work_mode: Literal["office", "wfh", "leave"] = "office"
+    check_in: datetime | None = None
+    check_out: datetime | None = None
 
 
 class WorkModeRequest(BaseModel):
@@ -129,6 +130,7 @@ class WorkModeRequest(BaseModel):
 
 OFFICE_DAY = "(CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata')::date"
 OFFICE_TZ = ZoneInfo("Asia/Kolkata")
+AUTO_CHECKOUT_MINUTES = int(os.getenv("AUTO_CHECKOUT_MINUTES", "30"))
 
 
 @app.get("/")
@@ -173,6 +175,8 @@ def record_attendance(event: Literal["check_in", "check_out"], source: str):
                 raise HTTPException(409, "Check in before checking out")
             if record["check_out"]:
                 return {"success": True, "status": "already_checked_out", "timestamp": record["check_out"]}
+            if source == "ios_shortcut" and datetime.now(OFFICE_TZ) - record["check_in"] < timedelta(minutes=AUTO_CHECKOUT_MINUTES):
+                return {"success": True, "status": "ignored_early_checkout", "timestamp": record["check_in"]}
             cursor.execute(f"UPDATE attendance SET check_out = now(), source = %s WHERE day = {OFFICE_DAY} RETURNING check_out", (source,))
         timestamp = cursor.fetchone()[event]
     return {"success": True, "status": event, "timestamp": timestamp}
@@ -203,17 +207,31 @@ def attendance(start_date: date | None = None, end_date: date | None = None, _: 
 
 @app.put("/api/attendance/{attendance_day}")
 def override_attendance(attendance_day: date, override: ManualAttendanceOverride, _: None = Depends(require_token)):
-    check_in = override.check_in.replace(tzinfo=OFFICE_TZ) if override.check_in.tzinfo is None else override.check_in
-    check_out = override.check_out.replace(tzinfo=OFFICE_TZ) if override.check_out.tzinfo is None else override.check_out
-    if check_out <= check_in:
+    check_in = override.check_in.replace(tzinfo=OFFICE_TZ) if override.check_in and override.check_in.tzinfo is None else override.check_in
+    check_out = override.check_out.replace(tzinfo=OFFICE_TZ) if override.check_out and override.check_out.tzinfo is None else override.check_out
+    if override.work_mode == "office" and (not check_in or not check_out):
+        raise HTTPException(422, "Office days need both check-in and check-out times")
+    if check_in and check_out and check_out <= check_in:
         raise HTTPException(422, "Check out must be later than check in")
+    if override.work_mode != "office":
+        check_in, check_out = None, None
     with db() as conn, conn.cursor() as cursor:
         cursor.execute("""INSERT INTO attendance (day, check_in, check_out, source, work_mode, manually_overridden)
-                          VALUES (%s, %s, %s, 'manual_override', 'office', TRUE)
+                          VALUES (%s, %s, %s, 'manual_override', %s, TRUE)
                           ON CONFLICT (day) DO UPDATE SET check_in = EXCLUDED.check_in,
-                              check_out = EXCLUDED.check_out, source = 'manual_override', work_mode = 'office', manually_overridden = TRUE
-                          RETURNING *""", (attendance_day, check_in, check_out))
+                              check_out = EXCLUDED.check_out, source = 'manual_override', work_mode = EXCLUDED.work_mode, manually_overridden = TRUE
+                          RETURNING *""", (attendance_day, check_in, check_out, override.work_mode))
         return cursor.fetchone()
+
+
+@app.delete("/api/attendance/{attendance_day}")
+def delete_attendance(attendance_day: date, _: None = Depends(require_token)):
+    with db() as conn, conn.cursor() as cursor:
+        cursor.execute("DELETE FROM attendance WHERE day = %s RETURNING id", (attendance_day,))
+        deleted = cursor.fetchone()
+    if not deleted:
+        raise HTTPException(404, "Attendance record not found")
+    return {"success": True}
 
 
 @app.post("/api/work-mode")

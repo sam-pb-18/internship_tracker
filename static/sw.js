@@ -1,4 +1,4 @@
-const CACHE = 'field-notes-v2';
+const CACHE = 'field-notes-v3';
 const ASSETS = ['/', '/static/styles.css', '/static/app.js', '/static/manifest.webmanifest'];
 self.addEventListener('install', event => event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS))));
 self.addEventListener('fetch', event => {

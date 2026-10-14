@@ -31,8 +31,9 @@ function renderTasks(tasks){
   document.querySelectorAll('[data-delete-task]').forEach(b=>b.onclick=async()=>{try{await api('/tasks/'+b.dataset.deleteTask,{method:'DELETE'});load()}catch(e){toast(e.message)}});
 }
 function renderLedger(records){
-  $('#attendance-list').innerHTML=records.length?records.map(x=>{const mode=x.work_mode||'office',mins=minutesBetween(x.check_in,x.check_out),target=mins>=480,manual=x.manually_overridden||x.source==='manual_override',office=mode==='office';const detail=office?`${fmtHours(mins)} · ${target?'goal met':'under 8h'}`:mode==='wfh'?'Working from home':'On leave';return `<div class="ledger-row"><strong><small>Date</small>${fmtDay(x.day)}</strong><span><small>${office?'In':'Mode'}</small>${office?fmtTime(x.check_in):mode.toUpperCase()}</span><span><small>${office?'Out':'Office time'}</small>${office?fmtTime(x.check_out):'—'}</span><span class="duration-cell ${office?(target?'on-target':'below-target'):''}"><small>${office?'Office hours':'Status'}</small>${detail}${manual?'<em class="manual-mark">MANUAL</em>':''}</span>${office?`<button class="quiet-button edit-attendance" data-edit-attendance="${x.day}">Edit</button>`:'<span></span>'}</div>`}).join(''):'<p class="chart-empty">Your attendance record will appear here.</p>';
+  $('#attendance-list').innerHTML=records.length?records.map(x=>{const mode=x.work_mode||'office',mins=minutesBetween(x.check_in,x.check_out),target=mins>=480,manual=x.manually_overridden||x.source==='manual_override',office=mode==='office';const detail=office?`${fmtHours(mins)} · ${target?'goal met':'under 8h'}`:mode==='wfh'?'Working from home':'On leave';return `<div class="ledger-row"><strong><small>Date</small>${fmtDay(x.day)}</strong><span><small>${office?'In':'Mode'}</small>${office?fmtTime(x.check_in):mode.toUpperCase()}</span><span><small>${office?'Out':'Office time'}</small>${office?fmtTime(x.check_out):'—'}</span><span class="duration-cell ${office?(target?'on-target':'below-target'):''}"><small>${office?'Office hours':'Status'}</small>${detail}${manual?'<em class="manual-mark">MANUAL</em>':''}</span><span class="attendance-actions"><button class="quiet-button edit-attendance" data-edit-attendance="${x.day}">Edit</button><button class="quiet-button delete-attendance" data-delete-attendance="${x.day}">Delete</button></span></div>`}).join(''):'<p class="chart-empty">Your attendance record will appear here.</p>';
   document.querySelectorAll('[data-edit-attendance]').forEach(button=>button.onclick=()=>openOverride(records.find(record=>record.day===button.dataset.editAttendance)));
+  document.querySelectorAll('[data-delete-attendance]').forEach(button=>button.onclick=async()=>{if(!confirm(`Delete attendance for ${fmtDay(button.dataset.deleteAttendance)}?`))return;try{await api('/attendance/'+button.dataset.deleteAttendance,{method:'DELETE'});toast('Attendance entry deleted');load()}catch(e){toast(e.message)}});
 }
 function renderChart(analysis){
   const {days,summary,target_hours:target}=analysis;
@@ -58,19 +59,23 @@ async function load(){
 }
 function toLocalInput(value){const d=new Date(value),pad=n=>String(n).padStart(2,'0');return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`}
 function openOverride(record){
-  if(!record)return;
-  $('#override-day').value=record.day;
-  $('#override-in').value=record.check_in?toLocalInput(record.check_in):`${record.day}T09:00`;
-  $('#override-out').value=record.check_out?toLocalInput(record.check_out):`${record.day}T17:00`;
+  const day=record?.day||new Date().toISOString().slice(0,10),mode=record?.work_mode||'office';
+  $('#override-title').textContent=record?'Edit attendance':'Add past attendance';
+  $('#override-day').value=day;$('#override-mode').value=mode;
+  $('#override-in').value=record?.check_in?toLocalInput(record.check_in):`${day}T09:00`;
+  $('#override-out').value=record?.check_out?toLocalInput(record.check_out):`${day}T17:00`;
+  toggleOverrideTimes();
   $('#override-dialog').showModal();
 }
+function toggleOverrideTimes(){const office=$('#override-mode').value==='office';$('#override-times').hidden=!office;$('#override-in').required=office;$('#override-out').required=office}
 $('#in-button').onclick=async()=>{try{const r=await api('/manual/check-in',{method:'POST'});toast(r.status==='already_checked_in'?'Already checked in':'Check-in saved');load()}catch(e){toast(e.message)}};
-$('#out-button').onclick=async()=>{try{const r=await api('/manual/check-out',{method:'POST'});toast(r.status==='already_checked_out'?'Already checked out':'Check-out saved');load()}catch(e){toast(e.message)}};
+$('#out-button').onclick=async()=>{try{const r=await api('/manual/check-out',{method:'POST'});toast(r.status==='already_checked_out'?'Already checked out':r.status==='ignored_early_checkout'?'Checkout ignored: too soon after check-in':'Check-out saved');load()}catch(e){toast(e.message)}};
 async function setWorkMode(work_mode){try{await api('/work-mode',{method:'POST',body:JSON.stringify({work_mode})});toast(work_mode==='wfh'?'Marked as working from home':'Marked as leave');load()}catch(e){toast(e.message)}}
 $('#wfh-button').onclick=()=>setWorkMode('wfh');$('#leave-button').onclick=()=>setWorkMode('leave');
 $('#entry-form').onsubmit=async e=>{e.preventDefault();try{await api('/work-logs',{method:'POST',body:JSON.stringify({title:$('#entry-title').value,body:$('#entry-body').value})});e.target.reset();toast('Note saved');load()}catch(e){toast(e.message)}};
 $('#task-form').onsubmit=async e=>{e.preventDefault();try{await api('/tasks',{method:'POST',body:JSON.stringify({title:$('#task-title').value})});e.target.reset();$('#task-title').focus();load()}catch(e){toast(e.message)}};
-$('#override-form').onsubmit=async e=>{e.preventDefault();const day=$('#override-day').value;try{await api('/attendance/'+day,{method:'PUT',body:JSON.stringify({check_in:$('#override-in').value,check_out:$('#override-out').value})});$('#override-dialog').close();toast('Attendance correction saved');load()}catch(e){toast(e.message)}};
+$('#override-form').onsubmit=async e=>{e.preventDefault();const day=$('#override-day').value,work_mode=$('#override-mode').value;try{await api('/attendance/'+day,{method:'PUT',body:JSON.stringify({work_mode,check_in:work_mode==='office'?$('#override-in').value:null,check_out:work_mode==='office'?$('#override-out').value:null})});$('#override-dialog').close();toast('Attendance saved as a manual entry');load()}catch(e){toast(e.message)}};
 $('#report-button').onclick=async()=>{const end=new Date(),start=new Date();start.setDate(end.getDate()-6);const iso=d=>d.toISOString().slice(0,10);try{const r=await api('/reports',{method:'POST',body:JSON.stringify({start_date:iso(start),end_date:iso(end),report_type:'weekly'})});$('#report-output').textContent=r.content;$('#report-dialog').showModal()}catch(e){toast(e.message)}};
 $('.close').onclick=()=>$('#report-dialog').close();load();
 document.querySelector('[data-close-override]').onclick=()=>$('#override-dialog').close();
+$('#override-mode').onchange=toggleOverrideTimes;$('#add-attendance').onclick=()=>openOverride();
