@@ -61,12 +61,15 @@ def initialize() -> None:
             CREATE TABLE IF NOT EXISTS attendance (
                 id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, day DATE UNIQUE NOT NULL,
                 check_in TIMESTAMPTZ, check_out TIMESTAMPTZ, source TEXT NOT NULL,
-                work_mode TEXT NOT NULL DEFAULT 'office' CHECK (work_mode IN ('office', 'wfh', 'leave')),
+                work_mode TEXT NOT NULL DEFAULT 'office' CHECK (work_mode IN ('office', 'wfh', 'leave', 'company_holiday')),
                 manually_overridden BOOLEAN NOT NULL DEFAULT FALSE,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT now()
             );
             ALTER TABLE attendance ADD COLUMN IF NOT EXISTS manually_overridden BOOLEAN NOT NULL DEFAULT FALSE;
             ALTER TABLE attendance ADD COLUMN IF NOT EXISTS work_mode TEXT NOT NULL DEFAULT 'office';
+            ALTER TABLE attendance DROP CONSTRAINT IF EXISTS attendance_work_mode_check;
+            ALTER TABLE attendance ADD CONSTRAINT attendance_work_mode_check
+                CHECK (work_mode IN ('office', 'wfh', 'leave', 'company_holiday'));
             CREATE TABLE IF NOT EXISTS work_logs (
                 id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, day DATE NOT NULL,
                 title TEXT NOT NULL, body TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -119,17 +122,18 @@ class TaskRequest(BaseModel):
 
 
 class ManualAttendanceOverride(BaseModel):
-    work_mode: Literal["office", "wfh", "leave"] = "office"
+    work_mode: Literal["office", "wfh", "leave", "company_holiday"] = "office"
     check_in: datetime | None = None
     check_out: datetime | None = None
 
 
 class WorkModeRequest(BaseModel):
-    work_mode: Literal["wfh", "leave"]
+    work_mode: Literal["wfh", "leave", "company_holiday"]
 
 
 OFFICE_DAY = "(CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata')::date"
 OFFICE_TZ = ZoneInfo("Asia/Kolkata")
+JOIN_DATE = date(2026, 10, 5)
 AUTO_CHECKOUT_MINUTES = int(os.getenv("AUTO_CHECKOUT_MINUTES", "30"))
 
 
@@ -153,8 +157,8 @@ def dashboard(_: None = Depends(require_token)):
         office_days = cursor.fetchone()["office_days"]
         cursor.execute("SELECT * FROM tasks ORDER BY completed ASC, created_at DESC LIMIT 30")
         tasks = cursor.fetchall()
-    return {"today": datetime.now(OFFICE_TZ).date(), "attendance": attendance, "entries": entries,
-            "recent_attendance": recent, "tasks": tasks, "office_days_month": office_days}
+    return {"today": datetime.now(OFFICE_TZ).date(), "joined_on": JOIN_DATE, "attendance": attendance,
+            "entries": entries, "recent_attendance": recent, "tasks": tasks, "office_days_month": office_days}
 
 
 def record_attendance(event: Literal["check_in", "check_out"], source: str):
@@ -207,6 +211,8 @@ def attendance(start_date: date | None = None, end_date: date | None = None, _: 
 
 @app.put("/api/attendance/{attendance_day}")
 def override_attendance(attendance_day: date, override: ManualAttendanceOverride, _: None = Depends(require_token)):
+    if attendance_day < JOIN_DATE:
+        raise HTTPException(422, "Attendance tracking starts on 5 October 2026")
     check_in = override.check_in.replace(tzinfo=OFFICE_TZ) if override.check_in and override.check_in.tzinfo is None else override.check_in
     check_out = override.check_out.replace(tzinfo=OFFICE_TZ) if override.check_out and override.check_out.tzinfo is None else override.check_out
     if override.work_mode == "office" and (not check_in or not check_out):
@@ -299,26 +305,15 @@ def delete_task(task_id: int, _: None = Depends(require_token)):
 @app.get("/api/analysis")
 def analysis(_: None = Depends(require_token)):
     with db() as conn, conn.cursor() as cursor:
-        cursor.execute("""WITH calendar AS (
-                            SELECT generate_series(
-                                (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata')::date - 29,
-                                (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata')::date, '1 day'::interval
-                            )::date AS day
-                        )
-                        SELECT calendar.day,
-                            COALESCE(attendance.work_mode,
-                                CASE WHEN EXTRACT(ISODOW FROM calendar.day) IN (6, 7) THEN 'leave' END
-                            ) AS work_mode,
-                            attendance.id IS NULL AND EXTRACT(ISODOW FROM calendar.day) IN (6, 7) AS weekend_leave
-                        FROM calendar LEFT JOIN attendance ON attendance.day = calendar.day
-                        WHERE attendance.id IS NOT NULL OR EXTRACT(ISODOW FROM calendar.day) IN (6, 7)
-                        ORDER BY calendar.day DESC""")
+        cursor.execute("""SELECT day, work_mode FROM attendance
+                          WHERE day >= %s ORDER BY day DESC LIMIT 30""", (JOIN_DATE,))
         rows = list(reversed(cursor.fetchall()))
     return {"days": rows, "summary": {
         "tracked_days": len(rows),
         "office_days": sum(row["work_mode"] == "office" for row in rows),
         "wfh_days": sum(row["work_mode"] == "wfh" for row in rows),
         "leave_days": sum(row["work_mode"] == "leave" for row in rows),
+        "company_holidays": sum(row["work_mode"] == "company_holiday" for row in rows),
     }}
 
 
