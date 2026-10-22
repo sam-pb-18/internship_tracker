@@ -299,16 +299,13 @@ def delete_task(task_id: int, _: None = Depends(require_token)):
 @app.get("/api/analysis")
 def analysis(_: None = Depends(require_token)):
     with db() as conn, conn.cursor() as cursor:
-        cursor.execute("""SELECT day, check_in, check_out,
-                          ROUND(EXTRACT(EPOCH FROM (check_out - check_in)) / 3600.0, 2) AS hours
-                          FROM attendance WHERE check_in IS NOT NULL AND check_out IS NOT NULL
-                          ORDER BY day DESC LIMIT 30""")
+        cursor.execute("SELECT day, work_mode FROM attendance ORDER BY day DESC LIMIT 30")
         rows = list(reversed(cursor.fetchall()))
-    hours = [float(row["hours"]) for row in rows]
-    return {"target_hours": 8, "days": rows, "summary": {
-        "completed_days": len(rows), "total_hours": round(sum(hours), 1),
-        "average_hours": round(sum(hours) / len(hours), 1) if hours else 0,
-        "target_days": sum(hour >= 8 for hour in hours),
+    return {"days": rows, "summary": {
+        "tracked_days": len(rows),
+        "office_days": sum(row["work_mode"] == "office" for row in rows),
+        "wfh_days": sum(row["work_mode"] == "wfh" for row in rows),
+        "leave_days": sum(row["work_mode"] == "leave" for row in rows),
     }}
 
 

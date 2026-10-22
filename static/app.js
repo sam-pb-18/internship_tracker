@@ -5,6 +5,11 @@ const fmtTime = stamp => stamp ? new Intl.DateTimeFormat([], {hour:'numeric',min
 const fmtDay = day => new Intl.DateTimeFormat([], {month:'short',day:'numeric'}).format(new Date(day+'T12:00:00'));
 const fmtHours = mins => `${Math.floor(mins/60)}h ${String(Math.round(mins%60)).padStart(2,'0')}m`;
 const esc = value => {const e=document.createElement('div');e.textContent=value;return e.innerHTML};
+const localDay = d => {const pad=n=>String(n).padStart(2,'0');return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`};
+const fromDay = day => new Date(day+'T12:00:00');
+const addDays = (day, amount) => {const next=new Date(day);next.setDate(next.getDate()+amount);return next};
+function mondayOf(date){const day=new Date(date);day.setHours(12,0,0,0);day.setDate(day.getDate()-((day.getDay()+6)%7));return day}
+let selectedWeek=mondayOf(new Date());
 function toast(message){const el=$('#toast');el.textContent=message;el.classList.add('show');setTimeout(()=>el.classList.remove('show'),2800)}
 function minutesBetween(a,b){return a&&b?Math.max(0,(new Date(b)-new Date(a))/60000):0}
 
@@ -31,36 +36,38 @@ function renderTasks(tasks){
   document.querySelectorAll('[data-delete-task]').forEach(b=>b.onclick=async()=>{try{await api('/tasks/'+b.dataset.deleteTask,{method:'DELETE'});load()}catch(e){toast(e.message)}});
 }
 function renderLedger(records){
-  $('#attendance-list').innerHTML=records.length?records.map(x=>{const mode=x.work_mode||'office',mins=minutesBetween(x.check_in,x.check_out),target=mins>=480,manual=x.manually_overridden||x.source==='manual_override',office=mode==='office';const detail=office?`${fmtHours(mins)} · ${target?'goal met':'under 8h'}`:mode==='wfh'?'Working from home':'On leave';return `<div class="ledger-row"><strong><small>Date</small>${fmtDay(x.day)}</strong><span><small>${office?'In':'Mode'}</small>${office?fmtTime(x.check_in):mode.toUpperCase()}</span><span><small>${office?'Out':'Office time'}</small>${office?fmtTime(x.check_out):'—'}</span><span class="duration-cell ${office?(target?'on-target':'below-target'):''}"><small>${office?'Office hours':'Status'}</small>${detail}${manual?'<em class="manual-mark">MANUAL</em>':''}</span><span class="attendance-actions"><button class="quiet-button edit-attendance" data-edit-attendance="${x.day}">Edit</button><button class="quiet-button delete-attendance" data-delete-attendance="${x.day}">Delete</button></span></div>`}).join(''):'<p class="chart-empty">Your attendance record will appear here.</p>';
+  const days=Array.from({length:7},(_,index)=>localDay(addDays(selectedWeek,index))),lookup=new Map(records.map(record=>[record.day,record]));
+  $('#week-label').textContent=`${fmtDay(days[0])} – ${fmtDay(days[6])}`;
+  $('#next-week').disabled=selectedWeek>=mondayOf(new Date());
+  $('#attendance-list').innerHTML=days.map(day=>{const x=lookup.get(day);if(!x)return `<div class="ledger-row empty-day"><strong><small>Date</small>${fmtDay(day)}</strong><span><small>Mode</small>—</span><span><small>Office time</small>—</span><span class="duration-cell"><small>Status</small>No entry</span><span class="attendance-actions"><button class="quiet-button add-day" data-add-day="${day}">Add</button></span></div>`;const mode=x.work_mode||'office',mins=minutesBetween(x.check_in,x.check_out),target=mins>=480,manual=x.manually_overridden||x.source==='manual_override',office=mode==='office';const detail=office?`${fmtHours(mins)} · ${target?'goal met':'under 8h'}`:mode==='wfh'?'Working from home':'On leave';return `<div class="ledger-row"><strong><small>Date</small>${fmtDay(x.day)}</strong><span><small>${office?'In':'Mode'}</small>${office?fmtTime(x.check_in):mode.toUpperCase()}</span><span><small>${office?'Out':'Office time'}</small>${office?fmtTime(x.check_out):'—'}</span><span class="duration-cell ${office?(target?'on-target':'below-target'):''}"><small>${office?'Office hours':'Status'}</small>${detail}${manual?'<em class="manual-mark">MANUAL</em>':''}</span><span class="attendance-actions"><button class="quiet-button edit-attendance" data-edit-attendance="${x.day}">Edit</button><button class="quiet-button delete-attendance" data-delete-attendance="${x.day}">Delete</button></span></div>`}).join('');
   document.querySelectorAll('[data-edit-attendance]').forEach(button=>button.onclick=()=>openOverride(records.find(record=>record.day===button.dataset.editAttendance)));
+  document.querySelectorAll('[data-add-day]').forEach(button=>button.onclick=()=>openOverride({day:button.dataset.addDay},true));
   document.querySelectorAll('[data-delete-attendance]').forEach(button=>button.onclick=async()=>{if(!confirm(`Delete attendance for ${fmtDay(button.dataset.deleteAttendance)}?`))return;try{await api('/attendance/'+button.dataset.deleteAttendance,{method:'DELETE'});toast('Attendance entry deleted');load()}catch(e){toast(e.message)}});
 }
 function renderChart(analysis){
-  const {days,summary,target_hours:target}=analysis;
+  const {days,summary}=analysis;
   $('#analysis-summary').innerHTML=[
-    ['Average day',summary.completed_days?`${summary.average_hours}h`:'—'],
-    ['Days at 8h+',summary.target_days],
-    ['Time recorded',summary.completed_days?`${summary.total_hours}h`:'—']
+    ['Office days',summary.office_days],
+    ['WFH days',summary.wfh_days],
+    ['Leave days',summary.leave_days]
   ].map(([label,value])=>`<div class="summary"><span>${label}</span><strong>${value}</strong></div>`).join('');
-  if(!days.length){$('#attendance-chart').innerHTML='<p class="chart-empty">Finish a check-in and check-out to see your time trend here.</p>';return}
-  const W=720,H=250,L=48,R=12,T=20,B=42,innerW=W-L-R,innerH=H-T-B,max=Math.max(target+1,...days.map(d=>Number(d.hours)+.5)),y=h=>T+innerH-(h/max)*innerH,x=i=>L+(i+.5)*(innerW/days.length),bar=Math.max(7,innerW/days.length*.58),targetY=y(target);
-  const grid=[0,4,8,Math.ceil(max)].filter((v,i,a)=>a.indexOf(v)===i&&v<=max);
-  const gridSvg=grid.map(v=>`<g><line class="chart-grid" x1="${L}" x2="${W-R}" y1="${y(v)}" y2="${y(v)}"/><text class="chart-axis" x="${L-8}" y="${y(v)+4}" text-anchor="end">${v}h</text></g>`).join('');
-  const bars=days.map((d,i)=>{const h=Number(d.hours),yy=y(h),met=h>=target,label=fmtDay(d.day);return `<g><rect class="chart-bar ${met?'':'below'}" x="${x(i)-bar/2}" y="${yy}" width="${bar}" height="${Math.max(1,T+innerH-yy)}" rx="1"><title>${label}: ${h.toFixed(1)} hours${met?' · 8h goal met':''}</title></rect>${(i===0||i===days.length-1||days.length<=7)?`<text class="chart-axis" x="${x(i)}" y="${H-16}" text-anchor="middle">${label}</text>`:''}</g>`}).join('');
-  $('#attendance-chart').innerHTML=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Completed hours per office day, compared with an eight-hour daily goal"><title>Daily recorded office hours</title><desc>Each bar is a completed office day. The dotted line is the flexible eight hour goal.</desc>${gridSvg}<line class="chart-target" x1="${L}" x2="${W-R}" y1="${targetY}" y2="${targetY}"/><text class="chart-label" x="${W-R}" y="${targetY-7}" text-anchor="end">8h goal</text>${bars}<text class="chart-label" x="${L}" y="12">Recorded hours</text></svg>`;
+  if(!days.length){$('#attendance-chart').innerHTML='<p class="chart-empty">Add Office, WFH, or Leave attendance to see your work pattern here.</p>';return}
+  const label={office:'Office',wfh:'WFH',leave:'Leave'};
+  $('#attendance-chart').innerHTML=`<div class="presence-legend"><span><i class="office-dot"></i>Office</span><span><i class="wfh-dot"></i>WFH</span><span><i class="leave-dot"></i>Leave</span></div><div class="presence-grid" role="list" aria-label="Last 30 recorded attendance days">${days.map(day=>`<div class="presence-day ${day.work_mode}" role="listitem" data-label="${fmtDay(day.day)} · ${label[day.work_mode]}"><span>${fmtDay(day.day)}</span><strong>${label[day.work_mode]}</strong></div>`).join('')}</div>`;
 }
-function render(data,analysis){
+function render(data,analysis,weekRecords){
   $('#today-label').textContent=new Intl.DateTimeFormat([], {weekday:'long',month:'long',day:'numeric'}).format(new Date(data.today+'T12:00:00'));
-  $('#office-days').textContent=data.office_days_month;renderAttendance(data.attendance);renderEntries(data.entries);renderTasks(data.tasks);renderLedger(data.recent_attendance);renderChart(analysis);
+  $('#office-days').textContent=data.office_days_month;renderAttendance(data.attendance);renderEntries(data.entries);renderTasks(data.tasks);renderLedger(weekRecords);renderChart(analysis);
 }
 async function load(){
   if(!key){key=prompt('Enter your personal Field Notes access key. It stays only in this browser.')||'';localStorage.setItem('field-notes-key',key)}
-  try{const [data,analysis]=await Promise.all([api('/dashboard'),api('/analysis')]);render(data,analysis)}catch(e){toast(e.message)}
+  const start=localDay(selectedWeek),end=localDay(addDays(selectedWeek,6));
+  try{const [data,analysis,weekRecords]=await Promise.all([api('/dashboard'),api('/analysis'),api(`/attendance?start_date=${start}&end_date=${end}`)]);render(data,analysis,weekRecords)}catch(e){toast(e.message)}
 }
 function toLocalInput(value){const d=new Date(value),pad=n=>String(n).padStart(2,'0');return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`}
-function openOverride(record){
+function openOverride(record,isNew=false){
   const day=record?.day||new Date().toISOString().slice(0,10),mode=record?.work_mode||'office';
-  $('#override-title').textContent=record?'Edit attendance':'Add past attendance';
+  $('#override-title').textContent=isNew||!record?'Add past attendance':'Edit attendance';
   $('#override-day').value=day;$('#override-mode').value=mode;
   $('#override-in').value=record?.check_in?toLocalInput(record.check_in):`${day}T09:00`;
   $('#override-out').value=record?.check_out?toLocalInput(record.check_out):`${day}T17:00`;
@@ -79,3 +86,5 @@ $('#report-button').onclick=async()=>{const end=new Date(),start=new Date();star
 $('.close').onclick=()=>$('#report-dialog').close();load();
 document.querySelector('[data-close-override]').onclick=()=>$('#override-dialog').close();
 $('#override-mode').onchange=toggleOverrideTimes;$('#add-attendance').onclick=()=>openOverride();
+$('#previous-week').onclick=()=>{selectedWeek=addDays(selectedWeek,-7);load()};
+$('#next-week').onclick=()=>{const next=addDays(selectedWeek,7);if(next<=mondayOf(new Date())){selectedWeek=next;load()}};
