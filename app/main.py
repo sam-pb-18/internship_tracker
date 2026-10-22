@@ -299,7 +299,20 @@ def delete_task(task_id: int, _: None = Depends(require_token)):
 @app.get("/api/analysis")
 def analysis(_: None = Depends(require_token)):
     with db() as conn, conn.cursor() as cursor:
-        cursor.execute("SELECT day, work_mode FROM attendance ORDER BY day DESC LIMIT 30")
+        cursor.execute("""WITH calendar AS (
+                            SELECT generate_series(
+                                (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata')::date - 29,
+                                (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata')::date, '1 day'::interval
+                            )::date AS day
+                        )
+                        SELECT calendar.day,
+                            COALESCE(attendance.work_mode,
+                                CASE WHEN EXTRACT(ISODOW FROM calendar.day) IN (6, 7) THEN 'leave' END
+                            ) AS work_mode,
+                            attendance.id IS NULL AND EXTRACT(ISODOW FROM calendar.day) IN (6, 7) AS weekend_leave
+                        FROM calendar LEFT JOIN attendance ON attendance.day = calendar.day
+                        WHERE attendance.id IS NOT NULL OR EXTRACT(ISODOW FROM calendar.day) IN (6, 7)
+                        ORDER BY calendar.day DESC""")
         rows = list(reversed(cursor.fetchall()))
     return {"days": rows, "summary": {
         "tracked_days": len(rows),
